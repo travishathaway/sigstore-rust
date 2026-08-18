@@ -129,7 +129,10 @@ async fn main() {
     // Create signing context with appropriate API version
     let tuf_config = if let Some(ref url) = instance {
         println!("  Using: custom instance ({})", url);
-        let config = sigstore_trust_root::tuf::TufConfig::custom(url);
+        let config = sigstore_trust_root::tuf::TufConfig::custom(
+            url,
+            sigstore_trust_root::tuf::TufBootstrap::UnsafeCachedRoot,
+        );
         sigstore_trust_root::SigningConfig::from_tuf(config)
             .await
             .unwrap_or_else(|e| {
@@ -219,15 +222,10 @@ async fn main() {
             entry.kind_version.kind, entry.kind_version.version
         );
         println!("  Log Index: {}", entry.log_index);
-        // For V2, integrated_time is always 0 - RFC3161 timestamps are used instead
-        let ts = entry.integrated_time;
-        if ts == 0 && entry.kind_version.version == "0.0.2" {
-            println!("  Integrated Time: (V2 uses RFC3161 timestamps)");
-        } else {
-            use jiff::Timestamp;
-            if let Ok(dt) = Timestamp::from_second(ts) {
-                println!("  Integrated Time: {}", dt);
-            }
+        // For V2, integrated_time is absent - RFC3161 timestamps are used instead
+        match entry.integrated_time {
+            Some(dt) => println!("  Integrated Time: {}", dt),
+            None => println!("  Integrated Time: (V2 uses RFC3161 timestamps)"),
         }
         // Show if we have inclusion proof (V2) vs just promise (V1)
         if entry.inclusion_proof.is_some() {

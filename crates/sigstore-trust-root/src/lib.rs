@@ -65,7 +65,7 @@
 //! Fetch from a custom TUF repository (e.g., for testing):
 //!
 //! ```ignore
-//! use sigstore_trust_root::{TrustedRoot, TufConfig};
+//! use sigstore_trust_root::{TrustedRoot, TufBootstrap, TufConfig};
 //!
 //! # async fn example() -> Result<(), sigstore_trust_root::Error> {
 //! let config = TufConfig::custom(
@@ -86,10 +86,11 @@ pub mod tuf;
 
 pub use error::{Error, Result};
 pub use signing_config::{
-    ServiceConfiguration, ServiceEndpoint, ServiceSelector, ServiceValidityPeriod, SigningConfig,
+    ServiceConfiguration, ServiceEndpoint, ServiceSelector, SigningConfig,
     SIGNING_CONFIG_MEDIA_TYPE, SIGSTORE_PRODUCTION_SIGNING_CONFIG, SIGSTORE_STAGING_SIGNING_CONFIG,
     SUPPORTED_FULCIO_VERSIONS, SUPPORTED_REKOR_VERSIONS, SUPPORTED_TSA_VERSIONS,
 };
+pub use sigstore_types::TimeRange;
 pub use trusted_root::{
     CertificateAuthority, CertificateTransparencyLog, SigstoreInstance, TimestampAuthority,
     TransparencyLog, TrustedRoot, ValidityPeriod, SIGSTORE_GITHUB_TRUSTED_ROOT,
@@ -98,7 +99,7 @@ pub use trusted_root::{
 
 #[cfg(feature = "tuf")]
 pub use tuf::{
-    fetch_trust_material, TufConfig, DEFAULT_TUF_URL, GITHUB_TUF_ROOT, GITHUB_TUF_URL,
-    PRODUCTION_TUF_ROOT, SIGNING_CONFIG_TARGET, STAGING_TUF_ROOT, STAGING_TUF_URL,
-    TRUSTED_ROOT_TARGET,
+    fetch_trust_material, fetch_trust_material_at, TufBootstrap, TufConfig, DEFAULT_TUF_URL,
+    GITHUB_TUF_ROOT, GITHUB_TUF_URL, PRODUCTION_TUF_ROOT, SIGNING_CONFIG_TARGET, STAGING_TUF_ROOT,
+    STAGING_TUF_URL, TRUSTED_ROOT_TARGET,
 };

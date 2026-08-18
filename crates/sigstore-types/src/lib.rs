@@ -11,6 +11,7 @@ pub mod encoding;
 pub mod error;
 pub mod hash;
 pub mod intoto;
+pub mod time_range;
 
 pub use artifact::Artifact;
 pub use bundle::{
@@ -21,10 +22,12 @@ pub use bundle::{
 pub use checkpoint::{Checkpoint, CheckpointSignature};
 pub use dsse::{pae, DsseEnvelope, DsseSignature};
 pub use encoding::{
-    base64_bytes, base64_bytes_option, hex_bytes, string_i64, CanonicalizedBody, DerCertificate,
-    DerPublicKey, DigestBytes, EntryUuid, HexHash, HexLogId, KeyHint, KeyId, LogIndex, LogKeyId,
-    PayloadBytes, PemContent, Sha256Hash, SignatureBytes, SignedTimestamp, TimestampToken,
+    base64_bytes, base64_bytes_option, hex_bytes, string_i64, string_timestamp_opt,
+    CanonicalizedBody, DerCertificate, DerPublicKey, DigestBytes, EntryUuid, HexHash, HexLogId,
+    KeyHint, KeyId, LogIndex, LogKeyId, PayloadBytes, PemContent, Sha256Hash, SignatureBytes,
+    SignedTimestamp, TimestampToken,
 };
 pub use error::{Error, Result};
 pub use hash::HashAlgorithm;
 pub use intoto::{Digest, Statement, Subject};
+pub use time_range::TimeRange;

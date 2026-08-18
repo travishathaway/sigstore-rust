@@ -4,12 +4,17 @@ use crate::error::{Error, Result};
 use crate::signing::SigningScheme;
 use aws_lc_rs::signature::{
     UnparsedPublicKey, ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA384_ASN1, ECDSA_P384_SHA256_ASN1,
-    ECDSA_P384_SHA384_ASN1, ED25519, RSA_PKCS1_2048_8192_SHA256, RSA_PKCS1_2048_8192_SHA384,
-    RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256, RSA_PSS_2048_8192_SHA384,
-    RSA_PSS_2048_8192_SHA512,
+    ECDSA_P384_SHA384_ASN1, ED25519, ML_DSA_44, ML_DSA_65, ML_DSA_87, RSA_PKCS1_2048_8192_SHA256,
+    RSA_PKCS1_2048_8192_SHA384, RSA_PKCS1_2048_8192_SHA512, RSA_PSS_2048_8192_SHA256,
+    RSA_PSS_2048_8192_SHA384, RSA_PSS_2048_8192_SHA512,
 };
+use const_oid::db::rfc5912::{ID_EC_PUBLIC_KEY, SECP_256_R_1};
+use const_oid::ObjectIdentifier;
 use sigstore_types::{DerPublicKey, SignatureBytes};
 use spki::SubjectPublicKeyInfoRef;
+
+/// id-Ed25519: 1.3.101.112
+const ID_ED25519: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.101.112");
 
 /// A public key for verification
 pub struct VerificationKey {
@@ -24,7 +29,7 @@ impl VerificationKey {
     ///
     /// This parses the SubjectPublicKeyInfo structure and extracts the raw
     /// public key bytes needed for verification.
-    pub fn from_spki(key: &DerPublicKey, scheme: SigningScheme) -> Result<Self> {
+    pub fn from_spki_with_scheme(key: &DerPublicKey, scheme: SigningScheme) -> Result<Self> {
         let spki = SubjectPublicKeyInfoRef::try_from(key.as_bytes())
             .map_err(|e| Error::InvalidKey(format!("Invalid SPKI: {e}")))?;
 
@@ -35,6 +40,66 @@ impl VerificationKey {
             bytes: raw_bytes,
             scheme,
         })
+    }
+
+    /// Create a verification key from a DER-encoded SPKI public key,
+    /// detecting the signing scheme from the SPKI algorithm identifier.
+    pub fn from_spki(key: &DerPublicKey) -> Result<Self> {
+        let spki = SubjectPublicKeyInfoRef::try_from(key.as_bytes())
+            .map_err(|e| Error::InvalidKey(format!("Invalid SPKI: {e}")))?;
+
+        let scheme = if spki.algorithm.oid == ID_ED25519 {
+            SigningScheme::Ed25519
+        } else if spki.algorithm.oid == ID_EC_PUBLIC_KEY {
+            match spki.algorithm.parameters_oid() {
+                Ok(curve) if curve == SECP_256_R_1 => SigningScheme::EcdsaP256Sha256,
+                Ok(curve) => {
+                    return Err(Error::InvalidKey(format!(
+                        "Unsupported EC curve OID: {curve}"
+                    )));
+                }
+                Err(e) => {
+                    return Err(Error::InvalidKey(format!("Invalid EC key parameters: {e}")));
+                }
+            }
+        } else {
+            return Err(Error::InvalidKey(format!(
+                "Unsupported key algorithm OID: {}",
+                spki.algorithm.oid
+            )));
+        };
+
+        Ok(Self {
+            bytes: spki.subject_public_key.raw_bytes().to_vec(),
+            scheme,
+        })
+    }
+
+    /// Create a verification key from DER key material.
+    ///
+    /// SPKI is preferred. For RSA schemes this also accepts the bare PKCS#1
+    /// `RSAPublicKey` encoding used by some Sigstore trusted roots.
+    pub fn from_der(key: &DerPublicKey, scheme: SigningScheme) -> Result<Self> {
+        match Self::from_spki_with_scheme(key, scheme) {
+            Ok(key) => Ok(key),
+            Err(_)
+                if matches!(
+                    scheme,
+                    SigningScheme::RsaPssSha256
+                        | SigningScheme::RsaPssSha384
+                        | SigningScheme::RsaPssSha512
+                        | SigningScheme::RsaPkcs1Sha256
+                        | SigningScheme::RsaPkcs1Sha384
+                        | SigningScheme::RsaPkcs1Sha512
+                ) =>
+            {
+                Ok(Self {
+                    bytes: key.as_bytes().to_vec(),
+                    scheme,
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Get the raw public key bytes
@@ -119,6 +184,21 @@ impl VerificationKey {
                     Error::Verification("RSA PKCS#1 SHA-512 signature invalid".to_string())
                 })
             }
+            SigningScheme::MlDsa44 => {
+                let key = UnparsedPublicKey::new(&ML_DSA_44, &self.bytes);
+                key.verify(data, signature)
+                    .map_err(|_| Error::Verification("ML-DSA-44 signature invalid".to_string()))
+            }
+            SigningScheme::MlDsa65 => {
+                let key = UnparsedPublicKey::new(&ML_DSA_65, &self.bytes);
+                key.verify(data, signature)
+                    .map_err(|_| Error::Verification("ML-DSA-65 signature invalid".to_string()))
+            }
+            SigningScheme::MlDsa87 => {
+                let key = UnparsedPublicKey::new(&ML_DSA_87, &self.bytes);
+                key.verify(data, signature)
+                    .map_err(|_| Error::Verification("ML-DSA-87 signature invalid".to_string()))
+            }
         }
     }
 
@@ -183,7 +263,7 @@ pub fn verify_signature(
     signature: &SignatureBytes,
     scheme: SigningScheme,
 ) -> Result<()> {
-    VerificationKey::from_spki(public_key, scheme)?.verify(data, signature)
+    VerificationKey::from_der(public_key, scheme)?.verify(data, signature)
 }
 
 /// Verify a signature over prehashed data using the specified scheme
@@ -202,7 +282,7 @@ pub fn verify_signature_prehashed(
     signature: &SignatureBytes,
     scheme: SigningScheme,
 ) -> Result<()> {
-    VerificationKey::from_spki(public_key, scheme)?.verify_prehashed(digest, signature)
+    VerificationKey::from_der(public_key, scheme)?.verify_prehashed(digest, signature)
 }
 
 #[cfg(test)]
@@ -217,7 +297,7 @@ mod tests {
         let sig = kp.sign(data).unwrap();
 
         let pubkey = kp.public_key_der().unwrap();
-        let vk = VerificationKey::from_spki(&pubkey, kp.default_scheme()).unwrap();
+        let vk = VerificationKey::from_spki_with_scheme(&pubkey, kp.default_scheme()).unwrap();
         assert!(vk.verify(data, &sig).is_ok());
     }
 
@@ -228,7 +308,7 @@ mod tests {
         let bad_sig = SignatureBytes::new(vec![0u8; 64]);
 
         let pubkey = kp.public_key_der().unwrap();
-        let vk = VerificationKey::from_spki(&pubkey, kp.default_scheme()).unwrap();
+        let vk = VerificationKey::from_spki_with_scheme(&pubkey, kp.default_scheme()).unwrap();
         assert!(vk.verify(data, &bad_sig).is_err());
     }
 
@@ -239,7 +319,7 @@ mod tests {
         let sig = kp.sign(data).unwrap();
 
         let pubkey = kp.public_key_der().unwrap();
-        let vk = VerificationKey::from_spki(&pubkey, kp.default_scheme()).unwrap();
+        let vk = VerificationKey::from_spki_with_scheme(&pubkey, kp.default_scheme()).unwrap();
         assert!(vk.verify(b"wrong data", &sig).is_err());
     }
 
@@ -251,7 +331,7 @@ mod tests {
         let digest = crate::hash::sha256(data);
 
         let pubkey = kp.public_key_der().unwrap();
-        let vk = VerificationKey::from_spki(&pubkey, kp.default_scheme()).unwrap();
+        let vk = VerificationKey::from_spki_with_scheme(&pubkey, kp.default_scheme()).unwrap();
         assert!(vk.verify_prehashed(digest.as_bytes(), &sig).is_ok());
     }
 
@@ -309,5 +389,83 @@ mod tests {
         let sha256 = crate::hash::sha256(data);
         assert!(vk256.verify(data, &sig).is_err());
         assert!(vk256.verify_prehashed(sha256.as_bytes(), &sig).is_err());
+    }
+
+    fn spki_der(
+        oid: ObjectIdentifier,
+        curve: Option<ObjectIdentifier>,
+        key_bytes: &[u8],
+    ) -> DerPublicKey {
+        use der::{asn1::BitString, Encode as _};
+        use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo};
+
+        let spki = SubjectPublicKeyInfo {
+            algorithm: AlgorithmIdentifier {
+                oid,
+                parameters: curve.map(|c| der::Any::encode_from(&c).unwrap()),
+            },
+            subject_public_key: BitString::from_bytes(key_bytes).unwrap(),
+        };
+        DerPublicKey::new(spki.to_der().unwrap())
+    }
+
+    #[test]
+    fn test_from_spki_ecdsa_p256_roundtrip() {
+        let kp = KeyPair::generate_ecdsa_p256().unwrap();
+        let data = b"checkpoint-style message";
+        let sig = kp.sign(data).unwrap();
+
+        let pubkey = kp.public_key_der().unwrap();
+        let vk = VerificationKey::from_spki(&pubkey).unwrap();
+        assert_eq!(vk.scheme(), SigningScheme::EcdsaP256Sha256);
+        assert!(vk.verify(data, &sig).is_ok());
+    }
+
+    #[test]
+    fn test_from_spki_ed25519_roundtrip() {
+        use aws_lc_rs::rand::SystemRandom;
+        use aws_lc_rs::signature::{Ed25519KeyPair, KeyPair as AwsKeyPair};
+
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).unwrap();
+        let kp = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+
+        let data = b"checkpoint-style message";
+        let sig = SignatureBytes::new(kp.sign(data).as_ref().to_vec());
+        let pubkey = spki_der(ID_ED25519, None, kp.public_key().as_ref());
+
+        let vk = VerificationKey::from_spki(&pubkey).unwrap();
+        assert_eq!(vk.scheme(), SigningScheme::Ed25519);
+        assert!(vk.verify(data, &sig).is_ok());
+    }
+
+    #[test]
+    fn test_from_spki_rejects_malformed_key() {
+        let garbage = DerPublicKey::new(vec![0x30, 0x03, 0x01, 0x01, 0xff]);
+        assert!(matches!(
+            VerificationKey::from_spki(&garbage),
+            Err(Error::InvalidKey(_))
+        ));
+    }
+
+    #[test]
+    fn test_from_spki_rejects_unsupported_algorithm() {
+        // rsaEncryption: 1.2.840.113549.1.1.1
+        let rsa_oid = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+        let key = spki_der(rsa_oid, None, &[0u8; 16]);
+        assert!(matches!(
+            VerificationKey::from_spki(&key),
+            Err(Error::InvalidKey(_))
+        ));
+    }
+
+    #[test]
+    fn test_from_spki_rejects_unsupported_ec_curve() {
+        use const_oid::db::rfc5912::SECP_384_R_1;
+
+        let key = spki_der(ID_EC_PUBLIC_KEY, Some(SECP_384_R_1), &[0u8; 97]);
+        assert!(matches!(
+            VerificationKey::from_spki(&key),
+            Err(Error::InvalidKey(_))
+        ));
     }
 }

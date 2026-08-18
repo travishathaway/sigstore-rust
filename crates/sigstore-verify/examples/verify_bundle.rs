@@ -152,7 +152,10 @@ async fn main() {
     // Load trusted root (staging or production Sigstore instance)
     let trusted_root = if let Some(url) = instance {
         println!("  Using: custom instance ({})", url);
-        let config = sigstore_trust_root::tuf::TufConfig::custom(&url);
+        let config = sigstore_trust_root::tuf::TufConfig::custom(
+            &url,
+            sigstore_trust_root::tuf::TufBootstrap::UnsafeCachedRoot,
+        );
         match TrustedRoot::from_tuf(config).await {
             Ok(root) => root,
             Err(e) => {
@@ -268,10 +271,7 @@ async fn main() {
                 println!("  Issuer: {}", iss);
             }
             if let Some(time) = result.integrated_time {
-                use jiff::Timestamp;
-                if let Ok(dt) = Timestamp::from_second(time) {
-                    println!("  Signed at: {}", dt);
-                }
+                println!("  Signed at: {}", time);
             }
             for warning in &result.warnings {
                 println!("  Warning: {}", warning);
